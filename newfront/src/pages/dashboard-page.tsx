@@ -34,7 +34,6 @@ import type { DepartmentStatus } from "@/lib/ops-data";
 
 type CoreDashboardData = {
   summary?: HospitalSummary;
-  erSummary?: Awaited<ReturnType<typeof getERSummary>>;
   twin?: DigitalTwinResponse;
   insights?: InsightsResponse;
   errors: string[];
@@ -55,7 +54,6 @@ function withTimeout<T>(request: Promise<T>, label: string, timeoutMs = 8000) {
 async function loadCoreData(): Promise<CoreDashboardData> {
   const results = await Promise.allSettled([
     withTimeout(getHospitalSummary(), "Hospital summary"),
-    withTimeout(getERSummary(), "ER summary"),
     withTimeout(getDigitalTwin(), "Digital twin"),
     withTimeout(getInsights(), "AI insights"),
   ]);
@@ -66,9 +64,8 @@ async function loadCoreData(): Promise<CoreDashboardData> {
 
   return {
     summary: value<HospitalSummary>(0),
-    erSummary: value<CoreDashboardData["erSummary"]>(1),
-    twin: value<DigitalTwinResponse>(2),
-    insights: value<InsightsResponse>(3),
+    twin: value<DigitalTwinResponse>(1),
+    insights: value<InsightsResponse>(2),
     errors: results.flatMap((result) =>
       result.status === "rejected"
         ? [
@@ -208,6 +205,7 @@ function DynamicPriority({
 export function Dashboard() {
   const [coreData, setCoreData] = useState<CoreDashboardData | null>(null);
   const [coreLoading, setCoreLoading] = useState(true);
+  const [erSummary, setErSummary] = useState<Awaited<ReturnType<typeof getERSummary>> | null>(null);
   const [erForecast, setErForecast] = useState<ERForecastResponse | null>(null);
   const [icuForecast, setIcuForecast] = useState<ICUForecastResponse | null>(
     null,
@@ -226,6 +224,20 @@ export function Dashboard() {
       })
       .finally(() => {
         if (active) setCoreLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    withTimeout(getERSummary(), "ER summary")
+      .then((result) => {
+        if (active) setErSummary(result);
+      })
+      .catch(() => {
+        // Keep the KPI unavailable rather than replacing a failed API result with a fake value.
       });
     return () => {
       active = false;
@@ -281,14 +293,14 @@ export function Dashboard() {
   }, []);
 
   const summary = coreData?.summary;
-  const er = coreData?.erSummary;
+  const er = erSummary;
   const twin = coreData?.twin;
   const departments = liveDepartments(twin);
   const activeVisits = summary?.active_visits;
   const hospitalAvailable = summary
     ? summary.total_beds - summary.occupied_beds
     : undefined;
-  const erPressure = er?.patients_waiting;
+  const patientsWaiting = erSummary?.patients_waiting ?? 0;
   const icuBuffer = icuForecast?.available_beds;
   const topInsights = coreData?.insights?.insights.slice(0, 3) ?? [];
   const erChart = forecastToChart(erForecast?.forecast, true);
@@ -330,12 +342,11 @@ export function Dashboard() {
           </span>
         }
       />
-      {coreData?.errors.length ? (
-        <div className="mb-4 rounded-lg border border-[#efd0c8] bg-[#fff7f4] p-3 text-xs text-[#a95848]">
-          Some core dashboard data could not be loaded. Available panels remain
-          live.
+      {/* {coreData?.errors.length ? (
+        <div className="mb-4 rounded-lg border border-[#eadb9b] bg-[#fffbea] p-3 text-xs text-[#8a7628]">  Loading
+          live data...
         </div>
-      ) : null}
+      ) : null} */}
 
       <section aria-labelledby="current-state">
         <div
@@ -344,7 +355,7 @@ export function Dashboard() {
         >
           Current hospital state
         </div>
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
           <KpiCard
             label="dashboard.patientsInHouse"
             value={activeVisits ?? "-"}
@@ -362,14 +373,13 @@ export function Dashboard() {
             }
             tone="teal"
           />
-          <KpiCard
-            label="dashboard.erPressure"
-            value={erPressure ?? "-"}
-            unit={erPressure === undefined ? undefined : "waiting"}
+          {/* <KpiCard
+            label="detail.patientsWaiting"
+            value={String(er?.patients_waiting ?? "-")}
             sub="dashboard.liveBackend"
             tone="red"
             href="/er"
-          />
+          /> */}
           <KpiCard
             label="dashboard.icuOccupancy"
             value={icuForecast?.current_occupancy ?? "-"}
